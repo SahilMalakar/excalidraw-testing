@@ -1,6 +1,4 @@
-import dotenv from "dotenv";
-dotenv.config();
-
+import "dotenv/config";
 import express from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
@@ -13,8 +11,8 @@ console.log("HTTP-SERVER: ", process.env.DATABASE_URL);
 const app = express();
 app.use(express.json());
 
-if (!process.env.JWT_SECRET) {
-  throw new Error("❌ JWT_SECRET missing in root .env");
+if (!process.env.JWT_SECRET || !process.env.DATABASE_URL) {
+  throw new Error("❌variable missing in root .env");
 }
 const JWT_SECRET = process.env.JWT_SECRET;
 console.log(JWT_SECRET);
@@ -24,7 +22,7 @@ const SALT_ROUNDS = 10;
 declare global {
   namespace Express {
     interface Request {
-      userId?: number;
+      userId?: string;
     }
   }
 }
@@ -120,16 +118,87 @@ app.post("/api/v1/login", async (req, res) => {
   }
 });
 
-app.post("/ap1/v1/room", auth, async (req, res) => {
-  const { data, success, error } = RoomSchema.safeParse(req.body);
-  if (!success) {
-    return res.status(400).json({ message: "Invalid input", error });
-  }
+app.post("/api/v1/room", auth, async (req, res) => {
+  try {
+    //Validate input
+    const { data, success, error } = RoomSchema.safeParse(req.body);
+    if (!success) {
+      return res.status(400).json({
+        message: "Invalid input",
+        error,
+      });
+    }
 
-  res.json({
-    roomId: 123,
-  });
+    //Get userId from auth middleware
+    const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        message: "Unauthorized",
+      });
+    }
+
+    //Create room
+    const room = await prisma.room.create({
+      data: {
+        slug: data.name,
+        adminId: userId,
+      },
+    });
+
+    //Success response
+    return res.status(201).json({
+      message: "Room created successfully",
+      room: room
+    });
+  } catch (err: any) {
+    //Prisma unique constraint error handling
+    if (err?.code === "P2002") {
+      return res.status(409).json({
+        message: "Room already exists",
+      });
+    }
+
+    console.error("Create room error:", err);
+    return res.status(500).json({
+      message: "Internal server error",
+    });
+  }
 });
+
+
+app.get("/api/v1/chats/:roomId", async (req, res) => {
+  try {
+    const roomId = Number(req.params.roomId);
+
+    if (Number.isNaN(roomId)) {
+      return res.status(400).json({
+        message: "Invalid roomId",
+      });
+    }
+
+    // Fetch last 50 messages of this room
+    const messages = await prisma.chat.findMany({
+      where: {
+        roomId: roomId,
+      },
+      orderBy: {
+        createdAt: "desc", // latest messages first
+      },
+      take: 50,
+    });
+
+    res.status(200).json({
+      messages: messages.reverse(), // oldest → newest for UI rendering
+    });
+  } catch (error) {
+    console.error("Fetch chat error:", error);
+    res.status(500).json({
+      message: "Internal server error",
+    });
+  }
+});
+
 const PORT = process.env.PORT || 4001;
 
 app.listen(PORT, () => {
