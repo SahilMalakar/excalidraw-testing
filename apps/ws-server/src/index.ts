@@ -1,10 +1,12 @@
-import dotenv from "dotenv";
-dotenv.config();
-
+import "dotenv/config";
 import WebSocket, { WebSocketServer } from "ws";
 import jwt, { JwtPayload } from "jsonwebtoken";
+import { prisma } from "@repo/db";
 
-if (!process.env.JWT_SECRET || !process.env.PORT) {
+if (!process.env.JWT_SECRET || !process.env.PORT || !process.env.DATABASE_URL) {
+  console.log("WS PORT:", process.env.PORT);
+  console.log("WS JWT_SECRET:", process.env.JWT_SECRET);
+  console.log("WS DATABASE_URL:", process.env.DATABASE_URL);
   throw new Error("❌ variables missing in environment variables");
 }
 
@@ -37,7 +39,7 @@ const wss = new WebSocketServer({ port: PORT });
 
 interface UsersType {
   ws: WebSocket; // WebSocket connection instance
-  rooms: string[]; // List of rooms user has joined
+  rooms: number[]; // List of rooms user has joined
   userId: string; // Authenticated userId
 }
 
@@ -60,26 +62,26 @@ const users: UsersType[] = [];
 function checkUser(token: string): string | null {
   try {
     if (!token) return null;
-  
+
     let decoded: JwtPayload;
-  
+
     try {
       decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
     } catch {
       return null;
     }
-  
+
     // TODO (VALIDATION):
     // Add stricter schema validation using zod / yup
     // Validate:
     //   - token payload shape
     //   - token expiry
     //   - user existence in DB
-  
+
     if (!decoded || typeof decoded !== "object" || !decoded.userId) {
       return null;
     }
-  
+
     return decoded.userId;
   } catch (error) {
     return null;
@@ -158,7 +160,7 @@ wss.on("connection", function connection(ws, request) {
       ws,
     });
 
-    ws.on("message", function message(data) {
+    ws.on("message", async function message(data) {
       let parsedData: any;
 
       // TODO (SECURITY):
@@ -180,13 +182,23 @@ wss.on("connection", function connection(ws, request) {
         const user = users.find((x) => x.ws === ws);
         if (!user) return;
 
+        const roomId = Number(parsedData.roomId);
         // TODO (DB CHECK):
         // Validate room existence from DB
         // Example:
         //   await prisma.room.findUnique({ where: { id: parsedData.roomId } })
 
-        if (!user.rooms.includes(parsedData.roomId)) {
-          user.rooms.push(parsedData.roomId);
+        console.log(
+          `JOIN roomId type: ${typeof parsedData.roomId} -> ${roomId}`,
+        );
+
+        if (!Number.isInteger(roomId)) {
+          ws.send(JSON.stringify({ type: "error", message: "Invalid roomId" }));
+          return;
+        }
+
+        if (!user.rooms.includes(roomId)) {
+          user.rooms.push(roomId);
         }
       }
 
@@ -201,8 +213,13 @@ wss.on("connection", function connection(ws, request) {
       }
 
       if (parsedData.type === "chat") {
-        const roomId = parsedData.roomId;
+        const roomId = Number(parsedData.roomId);
+        console.log(`type of roomId 😊 : ${typeof parsedData.roomId}`);
         const message = parsedData.message;
+        if (!Number.isInteger(roomId)) {
+          console.error("Invalid roomId:", parsedData.roomId);
+          return;
+        }
 
         // TODO (VALIDATION):
         // Enforce:
@@ -214,7 +231,9 @@ wss.on("connection", function connection(ws, request) {
         // TODO (PERSISTENCE):
         // Store message in DB
         // Example:
-        //   prisma.chat.create({ data: { roomId, userId, message } })
+        await prisma.chat.create({ data: { roomId, userId, message } }); //dumb approach
+
+        console.log(`type of roomId ✅: ${typeof parsedData.roomId}`);
 
         users.forEach((user) => {
           if (user.rooms.includes(roomId)) {
