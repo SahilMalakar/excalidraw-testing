@@ -199,6 +199,44 @@ app.get("/api/v1/chats/:roomId", async (req, res) => {
   }
 });
 
+app.get("/api/v1/room/:slug", async (req, res) => {
+  try {
+    const { slug } = req.params;
+
+    if (!slug || typeof slug !== "string") {
+      return res.status(400).json({
+        message: "Invalid room slug",
+      });
+    }
+
+    const room = await prisma.room.findUnique({
+      where: { slug },
+      select: {
+        id: true,
+        slug: true,
+        adminId: true,
+        createdAt: true,
+      },
+    });
+
+    if (!room) {
+      return res.status(404).json({
+        message: "Room not found",
+      });
+    }
+
+    return res.status(200).json({
+      room
+    });
+  } catch (error) {
+    console.error("Fetch room by slug error:", error);
+    return res.status(500).json({
+      message: "Internal server error",
+    });
+  }
+});
+
+
 const PORT = process.env.PORT || 4001;
 
 app.listen(PORT, () => {
